@@ -5,16 +5,16 @@ monitoring, and cost optimization.
 
 ## Stack
 - Frontend: HTML / CSS / Vanilla JS
-- Backend: Python Flask
-- Database: AWS RDS / DynamoDB (Phase 2)
-- IaC: Terraform (Phase 3)
+- Backend: Python Flask + SQLAlchemy
+- Database: SQLite (local) -> AWS RDS Postgres (cloud)
+- IaC: Terraform
 - CI/CD: Jenkins (Phase 4)
 - Monitoring: CloudWatch / Grafana (Phase 5)
 
 ## Phases
 - [x] Phase 1 - Backend + Frontend
 - [x] Phase 2 - Database Integration
-- [ ] Phase 3 - Infrastructure as Code
+- [x] Phase 3 - Infrastructure as Code (Terraform + AWS)
 - [ ] Phase 4 - CI/CD with Jenkins
 - [ ] Phase 5 - Auto-scaling & Monitoring
 - [ ] Phase 6 - Security
@@ -22,216 +22,7 @@ monitoring, and cost optimization.
 - [ ] Phase 8 - Testing
 - [ ] Phase 9 - Documentation
 
-
----
-
-
-# Dev Notes
-
-
-## Setup
-
-- OS: Windows, using Git Bash (switched from PowerShell early on)
-- Editor: VS Code
-- Tools already installed: Git, VS Code, Docker
-- Accounts: GitHub + AWS both ready
-
-
-## Problem: mkdir doesn't work in PowerShell for multiple folders
-
-PowerShell's mkdir only accepts one folder at a time.
-
-This fails:
-```
-mkdir frontend backend terraform jenkins monitoring
-```
-
-Fix - use semicolons in PowerShell:
-```
-mkdir frontend; mkdir backend; mkdir terraform; mkdir jenkins; mkdir monitoring
-```
-
-Or just switch to Git Bash where the original command works fine.
-Decided to use Git Bash for everything going forward.
-
-
-## Problem: pip not found when running from wrong folder
-
-Ran `pip freeze > requirements.txt` from the frontend folder by mistake.
-pip wasn't found because the virtual environment was activated in the backend folder.
-
-Fix:
-```
-cd ~/Documents/vscode/cloudcost-webapp/backend
-source venv/Scripts/activate
-pip freeze > requirements.txt
-```
-
-Always check which folder you're in before running commands.
-Always make sure (venv) is visible in the terminal before using pip.
-
-
----
-
-
-## Phase 1 - Backend + Frontend
-
-
-### What was built
-
-A simple full-stack task manager app running locally.
-
-Backend: Python Flask REST API with 3 endpoints
-Frontend: Single HTML file with vanilla JS that calls the API
-
-
-### Backend - app.py
-
-Routes built:
-- GET  /tasks         returns all tasks as JSON
-- POST /tasks         creates a new task, expects { "title": "..." } in body
-- DELETE /tasks/<id>  deletes task by id
-
-Data is stored in memory (a Python list), resets when Flask restarts.
-Database will fix this in Phase 2.
-
-Key concepts learned:
-- Flask routes and decorators (@app.route)
-- HTTP methods: GET, POST, DELETE and what each means
-- request.get_json() reads the JSON body sent by the client
-- jsonify() converts Python data to JSON to send back
-- List comprehension used to filter out deleted task
-- global keyword needed when reassigning a variable defined outside a function
-- 201 = created, 200 = ok (HTTP status codes)
-- debug=True auto-restarts Flask on file changes
-
-
-### Virtual environment
-
-Created with:
-```
-python -m venv venv
-```
-
-Activated with (Windows Git Bash):
-```
-source venv/Scripts/activate
-```
-
-(venv) appears in terminal when active. Always activate before using pip or running app.py.
-
-Installed packages:
-```
-pip install flask flask-cors
-```
-
-flask-cors is needed so the browser doesn't block requests from the frontend to the backend (CORS policy).
-
-
-### Testing the API with curl
-
-GET all tasks:
-```
-curl http://127.0.0.1:5000/tasks
-```
-
-POST a new task:
-```
-curl -X POST http://127.0.0.1:5000/tasks \
-  -H "Content-Type: application/json" \
-  -d '{"title": "my first task"}'
-```
-
-DELETE a task:
-```
-curl -X DELETE http://127.0.0.1:5000/tasks/1
-```
-
-curl flags explained:
-- -X       sets the HTTP method (POST, DELETE, etc), default is GET
-- -H       adds a header, Content-Type: application/json tells Flask the body is JSON
-- -d       the data/body being sent with the request
-
-
-### Frontend - index.html
-
-Single HTML file, no frameworks.
-Uses fetch() to call the Flask API.
-
-fetch() is the browser equivalent of curl.
-- GET request:  fetch(url)
-- POST request: fetch(url, { method: 'POST', headers: {...}, body: JSON.stringify({...}) })
-- DELETE:       fetch(url, { method: 'DELETE' })
-
-async/await used because network requests take time.
-await pauses the function until the response arrives.
-
-Flow when user adds a task:
-1. addTask() runs
-2. fetch() sends POST to Flask
-3. Flask adds task to list, returns it as JSON
-4. addTask() calls fetchTasks()
-5. fetchTasks() sends GET to Flask
-6. Flask returns full task list
-7. Browser redraws the list
-
-
-### Docker - backend
-
-Dockerfile created in backend/:
-```
-FROM python:3.11-slim
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install -r requirements.txt
-COPY . .
-EXPOSE 5000
-CMD ["python", "app.py"]
-```
-
-Key points:
-- requirements.txt copied and installed before the rest of the code
-  (Docker caches each step, this avoids reinstalling packages on every build)
-- EXPOSE 5000 documents the port, doesn't actually publish it
-- CMD is what runs when the container starts
-
-.dockerignore created to exclude:
-```
-venv/
-__pycache__/
-*.pyc
-.env
-```
-
-Build command:
-```
-docker build -t cloudcost-backend .
-```
-
--t gives the image a name
-. tells Docker to look for Dockerfile in current folder
-
-
----
-
-Problem: Empty reply from server
-Flask inside the container was binding to 127.0.0.1 by default which means it only listens inside the container, not from outside.
-Fix — change the last line in app.py:
-python# before
-app.run(debug=True)
-
-# after
-app.run(host='0.0.0.0', debug=True)
-0.0.0.0 means listen on all interfaces, allowing traffic from outside the container.
-
-Problem: 404 Not Found after fixing host
-app.run() was accidentally placed at the top of the file before any routes were defined. Flask started before it knew about any routes so nothing was registered.
-Also CORS(app) was missing.
-Fix — app.run() belongs only at the bottom inside if __name__ == '__main__': and CORS(app) must be right after app = Flask(__name__).
-
-
 ## Folder Structure
-
 ```
 cloudcost-webapp/
   backend/
@@ -243,89 +34,232 @@ cloudcost-webapp/
   frontend/
     index.html
   terraform/
+    provider.tf
+    variables.tf
+    main.tf
+    outputs.tf
   jenkins/
   monitoring/
   .gitignore
   README.md
 ```
 
+---
+
+# Dev Notes
+
+## Setup
+- OS: Windows, using Git Bash (switched from PowerShell early on)
+- Editor: VS Code
+- Tools: Git, VS Code, Docker, Terraform, AWS CLI
+- Accounts: GitHub + AWS
 
 ---
 
+## Phase 1 - Backend + Frontend
 
-## Things to improve later
+### What was built
+Simple full-stack task manager app running locally.
+- Backend: Python Flask REST API (3 endpoints)
+- Frontend: Single HTML file with vanilla JS
 
-- Add a PATCH /tasks/<id> route to mark tasks as done
-- Add input validation on the backend (what if title is missing?)
-- Frontend could show a loading state while fetching
-- Data resets on restart, Phase 2 (database) will fix this
-- Flask dev server not suitable for production, will be replaced later
+### Backend routes
+- GET    /tasks          returns all tasks as JSON
+- POST   /tasks          creates a task, expects { "title": "..." }
+- DELETE /tasks/<id>     deletes task by id
+
+### Key concepts
+- Flask routes use @app.route decorator
+- HTTP methods: GET = read, POST = create, DELETE = remove
+- request.get_json() reads the JSON body from the request
+- jsonify() converts Python data to JSON to send back
+- 200 = OK, 201 = created, 404 = not found
+- debug=True auto-restarts Flask on file changes
+
+### Virtual environment
+```
+python -m venv venv
+source venv/Scripts/activate   # Windows Git Bash
+pip install flask flask-cors
+```
+flask-cors needed so browser doesn't block requests from frontend to backend.
+Always activate venv before using pip or running app.py.
+
+### Testing with curl
+```
+curl http://127.0.0.1:5000/tasks
+curl -X POST http://127.0.0.1:5000/tasks -H "Content-Type: application/json" -d '{"title": "task"}'
+curl -X DELETE http://127.0.0.1:5000/tasks/1
+```
+- -X sets HTTP method
+- -H adds a header
+- -d is the request body
+
+### Frontend
+fetch() is the browser equivalent of curl.
+async/await used because network requests take time.
+Frontend never touches data directly, always goes through the API.
+
+### Docker
+```
+docker build -t cloudcost-backend .
+docker run -p 5000:5000 cloudcost-backend
+```
+Dockerfile copies requirements first then code (Docker layer caching).
+.dockerignore excludes venv/, __pycache__/, .env
 
 ---
 
 ## Phase 2 - Database Integration
 
-
 ### What changed
-
-Replaced the in-memory Python list with a real SQLite database using SQLAlchemy.
+Replaced in-memory Python list with SQLite using SQLAlchemy ORM.
 Data now persists across Flask restarts.
 
-
-### New dependency
-
-flask-sqlalchemy installed and added to requirements.txt:
-  pip install flask-sqlalchemy
-  pip freeze > requirements.txt
-
-
-### SQLAlchemy concepts
-
-ORM (Object Relational Mapper) lets you interact with the database using Python
-instead of raw SQL.
-
-  Task.query.all()        ->   SELECT * FROM task
-  db.session.add(task)    ->   stages the record to be saved
-  db.session.commit()     ->   writes it to the database
-  Task.query.get(id)      ->   SELECT * FROM task WHERE id = ?
-  db.session.delete(task) ->   stages the record for deletion
-
-The Task class extends db.Model which tells SQLAlchemy to create a table for it.
-Each class attribute (id, title, done) becomes a column.
-
-db.create_all() runs on startup and creates tables if they don't exist yet.
-Safe to run every time, it won't overwrite existing data.
-
-to_dict() is a helper method on the Task model to convert a Task object to a
-plain dictionary so jsonify() can serialize it to JSON.
-
+### SQLAlchemy basics
+- Task class extends db.Model -> becomes a database table
+- db.session.add(task) -> stages record
+- db.session.commit() -> writes to database
+- Task.query.all() -> SELECT * FROM task
+- Task.query.get(id) -> fetch by primary key
+- db.create_all() -> creates tables if they don't exist, safe to run every time
 
 ### SQLite vs RDS
+SQLite stores data in tasks.db file locally. Good for dev, no server needed.
+Problem in Docker: tasks.db lives inside container, lost on rebuild.
+RDS in Phase 3 fixes this - lives outside the container permanently.
 
-SQLite stores data in a local file (tasks.db) in the project folder.
-Good for local development, no server needed.
+---
 
-Problem with SQLite in Docker: tasks.db lives inside the container.
-If the container is rebuilt or stopped, the file is gone.
+## Phase 3 - Terraform + AWS
 
-This is acceptable for now. In Phase 3 we replace SQLite with AWS RDS (Postgres)
-which lives outside the container as a managed AWS service.
-Data will persist regardless of what happens to the container.
+### What was provisioned
+- VPC (10.0.0.0/16)
+- 2 public subnets (us-east-1a, us-east-1b)
+- 2 private subnets (us-east-1a, us-east-1b)
+- Internet Gateway + Route Table
+- EC2 security group (ports 22, 80, 5000 open)
+- RDS security group (port 5432, EC2 only)
+- RDS Postgres db.t3.micro in private subnets
+- EC2 t3.micro in public subnet with Docker installed via user_data
 
+### Terraform file structure
+- provider.tf  -> AWS provider config and region
+- variables.tf -> all variable definitions
+- main.tf      -> all resources
+- outputs.tf   -> ec2_public_ip, rds_endpoint, vpc_id
 
-### Folder structure update
+### Key Terraform commands
+```
+terraform init     # download providers, run once
+terraform plan     # preview changes before applying
+terraform apply    # create infrastructure
+terraform destroy  # tear everything down
+```
 
-backend/ now contains:
-  app.py
-  Dockerfile
-  requirements.txt
-  .dockerignore
-  tasks.db       <- auto-generated by SQLAlchemy on first run
-  venv/
+### Key concepts
+- Resources reference each other: aws_instance.app.public_ip
+- Terraform builds a dependency graph, order doesn't matter
+- (known after apply) means value only exists after resource is created
+- Tags on every resource for cost tracking and organization
+- sensitive = true on variables hides values from terminal output
 
+### Passing secrets
+Never hardcode passwords in .tf files.
+Use environment variables instead:
+```
+export TF_VAR_db_password="yourpassword"
+```
+Terraform picks up any TF_VAR_ prefixed env variable automatically.
 
-### Things to improve later
+### Deploying the container to EC2
+```
+# on local machine
+docker tag cloudcost-backend username/cloudcost-backend:latest
+docker push username/cloudcost-backend:latest
 
-- Add PATCH /tasks/<id> route to mark tasks as done
-- Add validation: what if title is missing in the request body?
-- Migrate from SQLite to Postgres locally before moving to AWS
+# on EC2 via SSH
+ssh -i ~/.ssh/cloudcost-keypair.pem ec2-user@YOUR_EC2_IP
+docker pull username/cloudcost-backend:latest
+docker run -d -p 5000:5000 username/cloudcost-backend:latest
+```
+-d runs container in background (detached mode)
+
+### Verified working
+curl http://98.92.237.199:5000/tasks returned tasks from EC2 on AWS.
+
+---
+
+## Problems & Fixes
+
+### PowerShell mkdir doesn't accept multiple folders
+```
+# fails in PowerShell
+mkdir frontend backend terraform jenkins monitoring
+
+# fix - use semicolons
+mkdir frontend; mkdir backend; mkdir terraform; mkdir jenkins; mkdir monitoring
+
+# or just use Git Bash
+```
+
+### pip not found
+Was in wrong folder. Always cd to backend and activate venv first.
+
+### Docker empty reply from server
+Flask was binding to 127.0.0.1 (container only).
+Fix: app.run(host='0.0.0.0', debug=True)
+
+### Docker 404 not found
+app.run() was placed at the top of app.py before routes were defined.
+Also CORS(app) was missing.
+Fix: app.run() belongs only at the bottom inside if __name__ == '__main__'
+
+### RDS username 'admin' is reserved
+Postgres doesn't allow 'admin' as master username.
+Fix: changed to 'dbadmin' in variables.tf
+
+### AMI not found
+AMI ID was region-specific and didn't exist in us-east-1.
+Fix: re-ran describe-images command with --region us-east-1 flag.
+
+### Key pair not found on apply
+Key pair was created in wrong region (not us-east-1).
+Fix: deleted local .pem file and recreated with --region us-east-1.
+```
+rm ~/.ssh/cloudcost-keypair.pem   # type y when prompted
+aws ec2 create-key-pair --key-name cloudcost-keypair --region us-east-1 \
+  --query 'KeyMaterial' --output text > ~/.ssh/cloudcost-keypair.pem
+chmod 400 ~/.ssh/cloudcost-keypair.pem
+```
+
+### Permission denied on .pem file
+chmod 400 makes the file read-only to protect it.
+If you need to delete it, type y when rm asks for confirmation.
+
+---
+
+## Security Notes
+- RDS in private subnets, no public IP, unreachable from internet
+- RDS security group only allows traffic from EC2 security group
+- db_password marked sensitive = true in Terraform
+- Passwords passed via TF_VAR_ env variables, never in code
+- .tfstate excluded from Git (contains sensitive resource details)
+- SSH port 22 open to 0.0.0.0/0 - acceptable for dev, restrict in prod
+
+## FinOps Notes
+- us-east-1 is cheapest AWS region
+- t3.micro EC2 ~$0.01/hour, free tier eligible under 12 months
+- db.t3.micro RDS ~$0.018/hour (~$13/month), not free tier
+- multi_az = false saves ~50% on RDS cost in dev
+- skip_final_snapshot = true avoids snapshot storage cost
+- Always run terraform destroy when done testing
+- Tags on every resource enable cost filtering in AWS Cost Explorer
+
+## Things to improve later
+- Restrict SSH to your IP only instead of 0.0.0.0/0
+- Store tfstate in S3 for team sharing and safety
+- Connect Flask to RDS Postgres instead of SQLite
+- Add PATCH /tasks/<id> to mark tasks as done
+- Add input validation on backend
+- Store Docker image version tags instead of always using latest

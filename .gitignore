@@ -1,0 +1,26 @@
+code .gitignore
+```
+
+Paste this inside:
+```
+# Node
+node_modules/
+.env
+
+# Python
+__pycache__/
+*.pyc
+.env
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars
+
+# Docker
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

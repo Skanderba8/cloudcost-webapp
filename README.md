@@ -15,7 +15,7 @@ monitoring, and cost optimization.
 - [x] Phase 1 - Backend + Frontend
 - [x] Phase 2 - Database Integration
 - [x] Phase 3 - Infrastructure as Code (Terraform + AWS)
-- [ ] Phase 4 - CI/CD with Jenkins
+- [x] Phase 4 - CI/CD with Jenkins
 - [ ] Phase 5 - Auto-scaling & Monitoring
 - [ ] Phase 6 - Security
 - [ ] Phase 7 - Cost Optimization
@@ -39,6 +39,8 @@ cloudcost-webapp/
     main.tf
     outputs.tf
   jenkins/
+    Jenkinsfile
+    docker-compose.yml
   monitoring/
   .gitignore
   README.md
@@ -190,6 +192,59 @@ curl http://98.92.237.199:5000/tasks returned tasks from EC2 on AWS.
 
 ---
 
+## Phase 4 - CI/CD with Jenkins
+
+### What was built
+Full CI/CD pipeline running Jenkins locally in Docker.
+On every build, Jenkins automatically builds, tags, pushes, and deploys
+the backend to EC2 without any manual steps.
+
+### Pipeline stages
+- Checkout  -> pulls latest code from GitHub
+- Build     -> docker build, tags image with BUILD_NUMBER and latest
+- Push      -> pushes both tags to Docker Hub
+- Deploy    -> SSHs into EC2, pulls new image, restarts container
+- Post      -> docker image prune to clean up dangling images
+
+### How Jenkins runs locally
+```
+cd jenkins
+docker-compose up -d    # start Jenkins
+docker-compose down     # stop, data preserved in jenkins_home volume
+```
+Jenkins UI at http://localhost:8080
+
+### docker-compose.yml explained
+- image: jenkins/jenkins:lts -> stable long term support image
+- user: root -> needed to install packages and access Docker socket
+- ports 8080:8080 -> Jenkins UI
+- ports 50000:50000 -> Jenkins agent communication
+- /var/run/docker.sock -> gives Jenkins access to host Docker daemon
+- jenkins_home volume -> persists all Jenkins config across restarts
+- entrypoint installs docker.io before Jenkins starts so pipeline
+  can run docker commands inside the container
+
+### Credentials stored in Jenkins
+- dockerhub-credentials -> Docker Hub username + personal access token
+- ec2-ssh-key -> SSH private key for EC2 (ec2-user)
+- github-credentials -> GitHub username + personal access token
+
+### Key concepts
+- BUILD_NUMBER tag gives every image a unique version, enables rollbacks
+- withCredentials block masks secrets in logs, never hardcoded in code
+- docker login uses --password-stdin, never -p flag
+- || true on docker stop/rm prevents failure if container doesn't exist yet
+- jenkins_home named volume survives docker-compose down
+- Docker socket mount lets Jenkins control Docker on the host machine
+- git safe.directory * needed to fix Git ownership error inside container
+- Docker Hub requires personal access token, not account password
+
+### Verified working
+Full pipeline ran successfully, curl http://3.210.201.67:5000/tasks
+returned live data from container running on EC2.
+
+---
+
 ## Problems & Fixes
 
 ### PowerShell mkdir doesn't accept multiple folders
@@ -237,6 +292,27 @@ chmod 400 ~/.ssh/cloudcost-keypair.pem
 chmod 400 makes the file read-only to protect it.
 If you need to delete it, type y when rm asks for confirmation.
 
+### docker: not found in Jenkins pipeline
+Jenkins runs inside a container. Even with the Docker socket mounted,
+the Docker CLI binary is not installed by default.
+Fix: added entrypoint to docker-compose.yml that runs apt-get install
+docker.io before Jenkins starts.
+
+### Jenkins git fatal: not in a git directory
+Newer Git versions block operations in directories owned by a different user.
+This happens after docker-compose down/up because the workspace ownership changes.
+Fix: docker exec -it jenkins git config --global --add safe.directory '*'
+
+### Docker Hub unauthorized in pipeline
+Docker Hub rejects account passwords via the API.
+Fix: generate a personal access token in Docker Hub settings and use
+that as the password in the dockerhub-credentials Jenkins credential.
+
+### Git Bash translates absolute paths in docker exec
+Git Bash converts /var/... paths to C:/Program Files/Git/var/...
+Fix: prefix paths with // to prevent translation.
+Example: docker exec -it jenkins ls //var/jenkins_home/workspace/
+
 ---
 
 ## Security Notes
@@ -246,6 +322,9 @@ If you need to delete it, type y when rm asks for confirmation.
 - Passwords passed via TF_VAR_ env variables, never in code
 - .tfstate excluded from Git (contains sensitive resource details)
 - SSH port 22 open to 0.0.0.0/0 - acceptable for dev, restrict in prod
+- Jenkins credentials encrypted at rest, masked in build logs
+- Docker Hub uses personal access token, not account password
+- SSH key passed via withCredentials, never written to disk in plaintext
 
 ## FinOps Notes
 - us-east-1 is cheapest AWS region
@@ -255,6 +334,9 @@ If you need to delete it, type y when rm asks for confirmation.
 - skip_final_snapshot = true avoids snapshot storage cost
 - Always run terraform destroy when done testing
 - Tags on every resource enable cost filtering in AWS Cost Explorer
+- docker image prune after every build prevents disk bloat
+- BUILD_NUMBER versioning enables rollbacks without storing extra images
+- Jenkins runs locally, no EC2 cost for CI/CD server
 
 ## Things to improve later
 - Restrict SSH to your IP only instead of 0.0.0.0/0
@@ -262,4 +344,4 @@ If you need to delete it, type y when rm asks for confirmation.
 - Connect Flask to RDS Postgres instead of SQLite
 - Add PATCH /tasks/<id> to mark tasks as done
 - Add input validation on backend
-- Store Docker image version tags instead of always using latest
+- Move Jenkins to EC2 and add GitHub webhook for automatic pipeline triggers

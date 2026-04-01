@@ -214,6 +214,21 @@ docker build -t cloudcost-backend .
 
 ---
 
+Problem: Empty reply from server
+Flask inside the container was binding to 127.0.0.1 by default which means it only listens inside the container, not from outside.
+Fix — change the last line in app.py:
+python# before
+app.run(debug=True)
+
+# after
+app.run(host='0.0.0.0', debug=True)
+0.0.0.0 means listen on all interfaces, allowing traffic from outside the container.
+
+Problem: 404 Not Found after fixing host
+app.run() was accidentally placed at the top of the file before any routes were defined. Flask started before it knew about any routes so nothing was registered.
+Also CORS(app) was missing.
+Fix — app.run() belongs only at the bottom inside if __name__ == '__main__': and CORS(app) must be right after app = Flask(__name__).
+
 
 ## Folder Structure
 

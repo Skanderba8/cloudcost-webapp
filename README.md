@@ -9,18 +9,19 @@ monitoring, and cost optimization.
 - Database: SQLite (local) -> AWS RDS Postgres (cloud)
 - IaC: Terraform
 - CI/CD: Jenkins (Phase 4)
-- Monitoring: CloudWatch / Grafana (Phase 5)
+- Monitoring: CloudWatch (Phase 5)
 
 ## Phases
 - [x] Phase 1 - Backend + Frontend
 - [x] Phase 2 - Database Integration
 - [x] Phase 3 - Infrastructure as Code (Terraform + AWS)
 - [x] Phase 4 - CI/CD with Jenkins
-- [ ] Phase 5 - Auto-scaling & Monitoring
-- [ ] Phase 6 - Security
-- [ ] Phase 7 - Cost Optimization
-- [ ] Phase 8 - Testing
-- [ ] Phase 9 - Documentation
+- [x] Phase 5 - Monitoring (CloudWatch)
+- [ ] Phase 6 - Auto-scaling
+- [ ] Phase 7 - Security
+- [ ] Phase 8 - Cost Optimization
+- [ ] Phase 9 - Testing
+- [ ] Phase 10 - Documentation
 
 ## Folder Structure
 ```
@@ -38,12 +39,70 @@ cloudcost-webapp/
     variables.tf
     main.tf
     outputs.tf
+    cloudwatch.tf
   jenkins/
     Jenkinsfile
     docker-compose.yml
   monitoring/
   .gitignore
   README.md
+```
+
+---
+
+## Workflow
+
+This is the full workflow to bring the project back up from zero and
+deploy end to end. Run these steps in order every time.
+
+### Step 1 - Provision infrastructure
+```
+cd terraform
+export TF_VAR_db_password="yourpassword"
+terraform apply
+```
+Note the ec2_public_ip from the outputs.
+
+### Step 2 - Update EC2 IP in Jenkinsfile
+Open jenkins/Jenkinsfile and update:
+```
+EC2_IP = "YOUR_NEW_EC2_IP"
+```
+Commit and push:
+```
+git add jenkins/Jenkinsfile
+git commit -m "update EC2 IP"
+git push origin main
+```
+
+### Step 3 - Start Jenkins
+```
+cd jenkins
+docker-compose up -d
+```
+Jenkins UI at http://localhost:8080
+
+### Step 4 - Run the pipeline
+Dashboard -> cloudcost-pipeline -> Build Now
+Watch Console Output. Pipeline builds image, pushes to Docker Hub,
+SSHs into EC2, pulls image, starts container.
+
+### Step 5 - Verify
+```
+curl http://YOUR_EC2_IP:5000/tasks
+```
+Should return JSON list of tasks.
+
+### Step 6 - Check monitoring
+Open CloudWatch dashboard URL from terraform outputs.
+Check CloudWatch -> Alarms -> All alarms, should show 3 alarms.
+
+### Step 7 - Tear down when done
+```
+cd terraform
+terraform destroy
+cd ../jenkins
+docker-compose down
 ```
 
 ---
@@ -150,6 +209,7 @@ RDS in Phase 3 fixes this - lives outside the container permanently.
 - variables.tf -> all variable definitions
 - main.tf      -> all resources
 - outputs.tf   -> ec2_public_ip, rds_endpoint, vpc_id
+- cloudwatch.tf -> CloudWatch alarms, dashboard, log group (added Phase 5)
 
 ### Key Terraform commands
 ```
@@ -221,8 +281,9 @@ Jenkins UI at http://localhost:8080
 - ports 50000:50000 -> Jenkins agent communication
 - /var/run/docker.sock -> gives Jenkins access to host Docker daemon
 - jenkins_home volume -> persists all Jenkins config across restarts
-- entrypoint installs docker.io before Jenkins starts so pipeline
-  can run docker commands inside the container
+- entrypoint installs docker.io and sets git safe.directory before
+  Jenkins starts so pipeline can run docker commands and git operations
+  inside the container without ownership errors
 
 ### Credentials stored in Jenkins
 - dockerhub-credentials -> Docker Hub username + personal access token
@@ -236,12 +297,72 @@ Jenkins UI at http://localhost:8080
 - || true on docker stop/rm prevents failure if container doesn't exist yet
 - jenkins_home named volume survives docker-compose down
 - Docker socket mount lets Jenkins control Docker on the host machine
-- git safe.directory * needed to fix Git ownership error inside container
+- git safe.directory * set in entrypoint to fix Git ownership error
 - Docker Hub requires personal access token, not account password
 
 ### Verified working
 Full pipeline ran successfully, curl http://3.210.201.67:5000/tasks
 returned live data from container running on EC2.
+
+---
+
+## Phase 5 - Monitoring (CloudWatch)
+
+### What was built
+Full AWS CloudWatch monitoring setup provisioned via Terraform.
+EC2 and RDS metrics collected automatically, alarms fire when
+thresholds are crossed, dashboard gives single view of all metrics.
+
+### What was added to Terraform
+New file cloudwatch.tf with:
+- CloudWatch Log Group for Flask app logs
+- EC2 CPU alarm - fires if CPU above 70% for 2 consecutive minutes
+- RDS CPU alarm - fires if RDS CPU above 70% for 2 consecutive minutes
+- RDS storage alarm - fires if free storage drops below 1GB
+- CloudWatch dashboard with 4 metric widgets
+
+main.tf changes:
+- IAM role for EC2 with CloudWatchAgentServerPolicy attached
+- IAM instance profile wrapping the role
+- EC2 now references the instance profile
+- user_data installs and starts amazon-cloudwatch-agent on boot
+
+### CloudWatch concepts
+- Metrics -> numerical data points AWS collects automatically
+  (CPU %, network bytes, storage bytes)
+- Alarms -> watch a metric and change state when threshold is crossed
+  OK = normal, ALARM = threshold crossed, Insufficient data = not enough
+  data collected yet (normal on first startup)
+- Log Group -> named bucket where application logs are stored
+- Dashboard -> visual grid of metric widgets in AWS console
+- Dimensions -> filter metrics to a specific resource
+  (InstanceId filters EC2 metrics to your specific instance)
+- evaluation_periods + period -> alarm checks every N seconds,
+  must breach threshold for M consecutive checks before firing
+  prevents false alarms from brief spikes
+- retention_in_days = 7 on log group -> logs auto-deleted after 7 days,
+  saves storage cost
+
+### IAM concepts
+- IAM Role -> an identity with permissions, EC2 can assume it
+- assume_role_policy -> defines who is allowed to take on this role
+  in this case ec2.amazonaws.com meaning any EC2 instance
+- CloudWatchAgentServerPolicy -> AWS managed policy with all permissions
+  needed to push metrics and logs to CloudWatch
+- Instance Profile -> wrapper required to attach an IAM role to EC2
+  EC2 cannot use a role directly, must go through a profile
+
+### Outputs added
+- cloudwatch_dashboard_url -> direct link to dashboard in AWS console
+- cloudwatch_log_group -> log group name for Flask logs
+- ec2_cloudwatch_alarm -> EC2 CPU alarm name
+- rds_cloudwatch_alarm_cpu -> RDS CPU alarm name
+- rds_cloudwatch_alarm_storage -> RDS storage alarm name
+
+### Verified working
+- 3 alarms visible in CloudWatch -> Alarms -> All alarms
+- Dashboard showing 4 widgets at cloudwatch_dashboard_url output
+- curl http://50.17.136.208:5000/tasks returned live data
 
 ---
 
@@ -301,7 +422,9 @@ docker.io before Jenkins starts.
 ### Jenkins git fatal: not in a git directory
 Newer Git versions block operations in directories owned by a different user.
 This happens after docker-compose down/up because the workspace ownership changes.
-Fix: docker exec -it jenkins git config --global --add safe.directory '*'
+Root fix: added git config --global --add safe.directory '*' to the
+entrypoint in docker-compose.yml so it runs automatically on every startup.
+Manual fix if needed: docker exec -it jenkins git config --global --add safe.directory '*'
 
 ### Docker Hub unauthorized in pipeline
 Docker Hub rejects account passwords via the API.
@@ -312,6 +435,11 @@ that as the password in the dockerhub-credentials Jenkins credential.
 Git Bash converts /var/... paths to C:/Program Files/Git/var/...
 Fix: prefix paths with // to prevent translation.
 Example: docker exec -it jenkins ls //var/jenkins_home/workspace/
+
+### CloudWatch dashboard invalid - missing region property
+CloudWatch dashboard widgets require an explicit region property even
+though the Terraform provider already knows the region.
+Fix: added region = var.aws_region to every widget's properties block.
 
 ---
 
@@ -325,6 +453,8 @@ Example: docker exec -it jenkins ls //var/jenkins_home/workspace/
 - Jenkins credentials encrypted at rest, masked in build logs
 - Docker Hub uses personal access token, not account password
 - SSH key passed via withCredentials, never written to disk in plaintext
+- IAM role uses least privilege - only CloudWatchAgentServerPolicy attached
+- EC2 accesses CloudWatch via IAM role, no hardcoded AWS keys anywhere
 
 ## FinOps Notes
 - us-east-1 is cheapest AWS region
@@ -337,6 +467,10 @@ Example: docker exec -it jenkins ls //var/jenkins_home/workspace/
 - docker image prune after every build prevents disk bloat
 - BUILD_NUMBER versioning enables rollbacks without storing extra images
 - Jenkins runs locally, no EC2 cost for CI/CD server
+- CloudWatch log retention set to 7 days, logs auto-deleted to avoid
+  storage cost buildup
+- CloudWatch basic monitoring is free, detailed monitoring costs extra
+  basic monitoring collects metrics every 5 minutes
 
 ## Things to improve later
 - Restrict SSH to your IP only instead of 0.0.0.0/0
@@ -345,3 +479,4 @@ Example: docker exec -it jenkins ls //var/jenkins_home/workspace/
 - Add PATCH /tasks/<id> to mark tasks as done
 - Add input validation on backend
 - Move Jenkins to EC2 and add GitHub webhook for automatic pipeline triggers
+- Add SNS topic to CloudWatch alarms to send email notifications on alarm

@@ -127,7 +127,7 @@ resource "aws_security_group" "ec2" {
         from_port = 22
         to_port = 22
         protocol = "tcp"
-        cidr_blocks = ["0.0.0.0/0"]
+        cidr_blocks = ["196.176.234.139/32"]
     }
     egress {
         from_port = 0
@@ -263,7 +263,22 @@ resource "aws_iam_role" "ec2_cloudwatch_role" {
     Project     = var.project_name
   }
 }
+# Allow EC2 to read secrets from Secrets Manager
+resource "aws_iam_role_policy" "secrets_policy" {
+  name = "${var.project_name}-secrets-policy"
+  role = aws_iam_role.ec2_cloudwatch_role.id
 
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = "secretsmanager:GetSecretValue"
+        Resource = aws_secretsmanager_secret.db_password.arn
+      }
+    ]
+  })
+}
 # Attach AWS managed CloudWatch policy to the role
 resource "aws_iam_role_policy_attachment" "cloudwatch_policy" {
   role       = aws_iam_role.ec2_cloudwatch_role.name

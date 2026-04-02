@@ -37,3 +37,13 @@ output "rds_cloudwatch_alarm_storage" {
   description = "Name of RDS storage alarm"
   value       = aws_cloudwatch_metric_alarm.rds_storage_low.alarm_name
 }
+
+output "secrets_manager_secret_name" {
+  description = "Name of the secret in AWS Secrets Manager"
+  value       = aws_secretsmanager_secret.db_password.name
+}
+
+output "secrets_manager_secret_arn" {
+  description = "ARN of the secret in AWS Secrets Manager"
+  value       = aws_secretsmanager_secret.db_password.arn
+}

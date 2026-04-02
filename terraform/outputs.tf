@@ -13,3 +13,27 @@ output "vpc_id" {
     value = aws_vpc.main.id
 }
 
+output "cloudwatch_dashboard_url" {
+  description = "URL to CloudWatch dashboard in AWS console"
+  value       = "https://console.aws.amazon.com/cloudwatch/home?region=${var.aws_region}#dashboards:name=${var.project_name}-dashboard"
+}
+
+output "cloudwatch_log_group" {
+  description = "CloudWatch log group name for Flask app logs"
+  value       = aws_cloudwatch_log_group.app_logs.name
+}
+
+output "ec2_cloudwatch_alarm" {
+  description = "Name of EC2 CPU alarm"
+  value       = aws_cloudwatch_metric_alarm.cpu_high.alarm_name
+}
+
+output "rds_cloudwatch_alarm_cpu" {
+  description = "Name of RDS CPU alarm"
+  value       = aws_cloudwatch_metric_alarm.rds_cpu_high.alarm_name
+}
+
+output "rds_cloudwatch_alarm_storage" {
+  description = "Name of RDS storage alarm"
+  value       = aws_cloudwatch_metric_alarm.rds_storage_low.alarm_name
+}

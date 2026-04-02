@@ -6,6 +6,8 @@ resource "aws_vpc" "main" {
   tags = {
     Name        = "${var.project_name}-vpc"
     Environment = var.environment
+      Project     = var.project_name
+
   }
 }
 
@@ -18,6 +20,8 @@ resource "aws_subnet" "public_1" {
   tags = {
     Name        = "${var.project_name}-subnet-public-1"
     Environment = var.environment
+      Project     = var.project_name
+
   }
 }
 
@@ -30,6 +34,8 @@ resource "aws_subnet" "public_2" {
   tags = {
     Name        = "${var.project_name}-subnet-public-2"
     Environment = var.environment
+      Project     = var.project_name
+
   }
 }
 
@@ -42,6 +48,8 @@ resource "aws_subnet" "private_1" {
   tags = {
     Name        = "${var.project_name}-subnet-private-1"
     Environment = var.environment
+      Project     = var.project_name
+
   }
 }
 
@@ -53,6 +61,8 @@ resource "aws_subnet" "private_2" {
   tags = {
     Name        = "${var.project_name}-subnet-private-2"
     Environment = var.environment
+      Project     = var.project_name
+
   }
 }
 resource "aws_internet_gateway" "main" {
@@ -61,6 +71,8 @@ resource "aws_internet_gateway" "main" {
   tags = {
     Name        = "${var.project_name}-igw"
     Environment = var.environment
+      Project     = var.project_name
+
   }
 }
 
@@ -75,7 +87,10 @@ resource "aws_route_table" "public" {
   tags = {
     Name        = "${var.project_name}-public-rt"
     Environment = var.environment
+      Project     = var.project_name
+
   }
+
 }
 
 resource "aws_route_table_association" "public_1" {
@@ -123,6 +138,8 @@ resource "aws_security_group" "ec2" {
     tags = {
         Name        = "${var.project_name}-ec2-sg"
         Environment = var.environment
+          Project     = var.project_name
+
     }
 }
 resource "aws_security_group" "rds" {
@@ -145,6 +162,8 @@ resource "aws_security_group" "rds" {
     tags = {
         Name        = "${var.project_name}-rds-sg"
         Environment = var.environment
+          Project     = var.project_name
+
     }
 }
 
@@ -154,6 +173,8 @@ resource "aws_db_subnet_group" "main" {
     tags = {
         Name        = "${var.project_name}-rds-subnet-group"
         Environment = var.environment
+          Project     = var.project_name
+
     }
 }
 
@@ -179,28 +200,84 @@ resource "aws_db_instance" "main" {
     tags = {
         Name        = "${var.project_name}-db"
         Environment = var.environment
+          Project     = var.project_name
+
     }
 }
 
 resource "aws_instance" "app" {
-    ami = "ami-0f989e78a92d5f420"
-    instance_type = var.instance_type
-    subnet_id = aws_subnet.public_1.id
-    vpc_security_group_ids = [aws_security_group.ec2.id]
-    key_name = "cloudcost-keypair"
+  ami                    = "ami-0f989e78a92d5f420"
+  instance_type          = var.instance_type
+  subnet_id              = aws_subnet.public_1.id
+  vpc_security_group_ids = [aws_security_group.ec2.id]
+  key_name               = "cloudcost-keypair"
+  iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
 
-    user_data = <<-EOF
+  user_data = <<-EOF
               #!/bin/bash
               dnf update -y
               dnf install -y docker
               systemctl start docker
               systemctl enable docker
+
+              # install CloudWatch agent
+              dnf install -y amazon-cloudwatch-agent
+
+              # start CloudWatch agent with default config
+              /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+                -a fetch-config \
+                -m ec2 \
+                -s \
+                -c default
+
               docker pull python:3.11-slim
               EOF
 
-    tags = {
-        Name        = "${var.project_name}-app-server"
-        Environment = var.environment
-    }
+  tags = {
+    Name        = "${var.project_name}-app-server"
+    Environment = var.environment
+    Project     = var.project_name
+  }
 }
 
+# IAM role so EC2 can write to CloudWatch
+resource "aws_iam_role" "ec2_cloudwatch_role" {
+  name = "${var.project_name}-ec2-cloudwatch-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action    = "sts:AssumeRole"
+        Effect    = "Allow"
+        Principal = {
+          Service = "ec2.amazonaws.com"
+        }
+      }
+    ]
+  })
+
+  tags = {
+    Name        = "${var.project_name}-ec2-cloudwatch-role"
+    Environment = var.environment
+    Project     = var.project_name
+  }
+}
+
+# Attach AWS managed CloudWatch policy to the role
+resource "aws_iam_role_policy_attachment" "cloudwatch_policy" {
+  role       = aws_iam_role.ec2_cloudwatch_role.name
+  policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
+}
+
+# Instance profile wraps the role so EC2 can use it
+resource "aws_iam_instance_profile" "ec2_profile" {
+  name = "${var.project_name}-ec2-profile"
+  role = aws_iam_role.ec2_cloudwatch_role.name
+
+  tags = {
+    Name        = "${var.project_name}-ec2-profile"
+    Environment = var.environment
+    Project     = var.project_name
+  }
+}

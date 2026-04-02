@@ -4,7 +4,7 @@ pipeline {
     environment {
         DOCKER_IMAGE = "skander212/cloudcost-backend"
         DOCKER_TAG = "${BUILD_NUMBER}"
-        EC2_IP = "3.210.201.67"
+        EC2_IP = "50.17.136.208"
     }
 
     stages {

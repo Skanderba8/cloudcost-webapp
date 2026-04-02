@@ -6,10 +6,10 @@ monitoring, and cost optimization.
 ## Stack
 - Frontend: HTML / CSS / Vanilla JS
 - Backend: Python Flask + SQLAlchemy
-- Database: SQLite (local) -> AWS RDS Postgres (cloud)
-- IaC: Terraform
-- CI/CD: Jenkins (Phase 4)
-- Monitoring: CloudWatch (Phase 5)
+- Database: AWS RDS Postgres (cloud)
+- IaC: Terraform (VPC, ALB, ASG, RDS, Secrets Manager)
+- CI/CD: Jenkins (Docker-out-of-Docker / Phase 4)
+- Monitoring: CloudWatch Metrics & Centralized Logging (Phase 5-7)
 
 ## Phases
 - [x] Phase 1 - Backend + Frontend
@@ -17,36 +17,36 @@ monitoring, and cost optimization.
 - [x] Phase 3 - Infrastructure as Code (Terraform + AWS)
 - [x] Phase 4 - CI/CD with Jenkins
 - [x] Phase 5 - Monitoring (CloudWatch)
-- [ ] Phase 6 - Auto-scaling
-- [ ] Phase 7 - Security
+- [x] Phase 6 - Auto-scaling
+- [x] Phase 7 - Security
 - [ ] Phase 8 - Cost Optimization
 - [ ] Phase 9 - Testing
 - [ ] Phase 10 - Documentation
 
 ## Folder Structure
-```
 cloudcost-webapp/
-  backend/
-    app.py
-    Dockerfile
-    requirements.txt
-    .dockerignore
-    venv/
-  frontend/
-    index.html
-  terraform/
-    provider.tf
-    variables.tf
-    main.tf
-    outputs.tf
-    cloudwatch.tf
-  jenkins/
-    Jenkinsfile
-    docker-compose.yml
-  monitoring/
-  .gitignore
-  README.md
-```
+backend/
+app.py
+Dockerfile
+requirements.txt
+.dockerignore
+venv/
+frontend/
+index.html
+terraform/
+provider.tf
+variables.tf
+main.tf
+outputs.tf
+cloudwatch.tf
+autoscaling.tf
+jenkins/
+Jenkinsfile
+docker-compose.yml
+monitoring/
+.gitignore
+README.md
+
 
 ---
 
@@ -56,54 +56,46 @@ This is the full workflow to bring the project back up from zero and
 deploy end to end. Run these steps in order every time.
 
 ### Step 1 - Provision infrastructure
-```
 cd terraform
 export TF_VAR_db_password="yourpassword"
 terraform apply
-```
-Note the ec2_public_ip from the outputs.
 
-### Step 2 - Update EC2 IP in Jenkinsfile
-Open jenkins/Jenkinsfile and update:
-```
-EC2_IP = "YOUR_NEW_EC2_IP"
-```
-Commit and push:
-```
-git add jenkins/Jenkinsfile
-git commit -m "update EC2 IP"
-git push origin main
-```
+Note the `alb_dns_name` and `rds_endpoint` from the outputs.
+
+### Step 2 - Update Jenkinsfile
+Open `jenkins/Jenkinsfile`. Ensure `DOCKER_IMAGE` is correct. 
+*(Note: `EC2_IP` is no longer needed as the Auto Scaling Group handles deployment).*
 
 ### Step 3 - Start Jenkins
-```
 cd jenkins
 docker-compose up -d
-```
+
 Jenkins UI at http://localhost:8080
 
 ### Step 4 - Run the pipeline
 Dashboard -> cloudcost-pipeline -> Build Now
-Watch Console Output. Pipeline builds image, pushes to Docker Hub,
-SSHs into EC2, pulls image, starts container.
+Watch Console Output. Pipeline builds the image and pushes it to Docker Hub as `:latest`.
 
-### Step 5 - Verify
-```
-curl http://YOUR_EC2_IP:5000/tasks
-```
-Should return JSON list of tasks.
+### Step 5 - Trigger Instance Refresh (Scaling Deployment)
+Since the app is now managed by an Auto Scaling Group, force AWS to pull the new code:
+Go to AWS Console -> EC2 -> Auto Scaling Groups -> Select your group -> Instance Refresh -> Start Instance Refresh.
 
-### Step 6 - Check monitoring
+### Step 6 - Verify
+curl http://YOUR_ALB_DNS_NAME/tasks
+
+Should return a JSON list of tasks (or `[]` if the fresh RDS is empty).
+
+### Step 7 - Check monitoring
 Open CloudWatch dashboard URL from terraform outputs.
-Check CloudWatch -> Alarms -> All alarms, should show 3 alarms.
+Check CloudWatch -> Alarms -> All alarms, should show alarms for EC2 and RDS.
+Check CloudWatch -> Log groups -> `/cloudcost/app` to see live container logs.
 
-### Step 7 - Tear down when done
-```
+### Step 8 - Tear down when done
 cd terraform
 terraform destroy
 cd ../jenkins
 docker-compose down
-```
+
 
 ---
 
@@ -138,20 +130,18 @@ Simple full-stack task manager app running locally.
 - debug=True auto-restarts Flask on file changes
 
 ### Virtual environment
-```
 python -m venv venv
 source venv/Scripts/activate   # Windows Git Bash
 pip install flask flask-cors
-```
+
 flask-cors needed so browser doesn't block requests from frontend to backend.
 Always activate venv before using pip or running app.py.
 
 ### Testing with curl
-```
 curl http://127.0.0.1:5000/tasks
 curl -X POST http://127.0.0.1:5000/tasks -H "Content-Type: application/json" -d '{"title": "task"}'
 curl -X DELETE http://127.0.0.1:5000/tasks/1
-```
+
 - -X sets HTTP method
 - -H adds a header
 - -d is the request body
@@ -162,10 +152,9 @@ async/await used because network requests take time.
 Frontend never touches data directly, always goes through the API.
 
 ### Docker
-```
 docker build -t cloudcost-backend .
 docker run -p 5000:5000 cloudcost-backend
-```
+
 Dockerfile copies requirements first then code (Docker layer caching).
 .dockerignore excludes venv/, __pycache__/, .env
 
@@ -188,7 +177,7 @@ Data now persists across Flask restarts.
 ### SQLite vs RDS
 SQLite stores data in tasks.db file locally. Good for dev, no server needed.
 Problem in Docker: tasks.db lives inside container, lost on rebuild.
-RDS in Phase 3 fixes this - lives outside the container permanently.
+RDS in Phase 7 fixes this - lives outside the container permanently.
 
 ---
 
@@ -212,12 +201,11 @@ RDS in Phase 3 fixes this - lives outside the container permanently.
 - cloudwatch.tf -> CloudWatch alarms, dashboard, log group (added Phase 5)
 
 ### Key Terraform commands
-```
 terraform init     # download providers, run once
 terraform plan     # preview changes before applying
 terraform apply    # create infrastructure
 terraform destroy  # tear everything down
-```
+
 
 ### Key concepts
 - Resources reference each other: aws_instance.app.public_ip
@@ -229,22 +217,20 @@ terraform destroy  # tear everything down
 ### Passing secrets
 Never hardcode passwords in .tf files.
 Use environment variables instead:
-```
 export TF_VAR_db_password="yourpassword"
-```
+
 Terraform picks up any TF_VAR_ prefixed env variable automatically.
 
-### Deploying the container to EC2
-```
-# on local machine
+### Deploying the container to EC2 (Legacy Phase 3-5)
+on local machine
 docker tag cloudcost-backend username/cloudcost-backend:latest
 docker push username/cloudcost-backend:latest
 
-# on EC2 via SSH
+on EC2 via SSH
 ssh -i ~/.ssh/cloudcost-keypair.pem ec2-user@YOUR_EC2_IP
 docker pull username/cloudcost-backend:latest
 docker run -d -p 5000:5000 username/cloudcost-backend:latest
-```
+
 -d runs container in background (detached mode)
 
 ### Verified working
@@ -263,15 +249,14 @@ the backend to EC2 without any manual steps.
 - Checkout  -> pulls latest code from GitHub
 - Build     -> docker build, tags image with BUILD_NUMBER and latest
 - Push      -> pushes both tags to Docker Hub
-- Deploy    -> SSHs into EC2, pulls new image, restarts container
+- Deploy    -> (Removed in Phase 6/7 - Handled by AWS Auto Scaling)
 - Post      -> docker image prune to clean up dangling images
 
 ### How Jenkins runs locally
-```
 cd jenkins
 docker-compose up -d    # start Jenkins
 docker-compose down     # stop, data preserved in jenkins_home volume
-```
+
 Jenkins UI at http://localhost:8080
 
 ### docker-compose.yml explained
@@ -299,10 +284,6 @@ Jenkins UI at http://localhost:8080
 - Docker socket mount lets Jenkins control Docker on the host machine
 - git safe.directory * set in entrypoint to fix Git ownership error
 - Docker Hub requires personal access token, not account password
-
-### Verified working
-Full pipeline ran successfully, curl http://3.210.201.67:5000/tasks
-returned live data from container running on EC2.
 
 ---
 
@@ -352,32 +333,73 @@ main.tf changes:
 - Instance Profile -> wrapper required to attach an IAM role to EC2
   EC2 cannot use a role directly, must go through a profile
 
-### Outputs added
-- cloudwatch_dashboard_url -> direct link to dashboard in AWS console
-- cloudwatch_log_group -> log group name for Flask logs
-- ec2_cloudwatch_alarm -> EC2 CPU alarm name
-- rds_cloudwatch_alarm_cpu -> RDS CPU alarm name
-- rds_cloudwatch_alarm_storage -> RDS storage alarm name
+---
 
-### Verified working
-- 3 alarms visible in CloudWatch -> Alarms -> All alarms
-- Dashboard showing 4 widgets at cloudwatch_dashboard_url output
-- curl http://50.17.136.208:5000/tasks returned live data
+## Phase 6 & 7 - Auto-Scaling & Cloud Security
+
+### What was built
+Shifted from a "Single Server" to a highly available, self-healing "Cluster" architecture. Migrated from local SQLite to managed RDS Postgres, protected by AWS Secrets Manager.
+
+### Key Components
+- Application Load Balancer (ALB): Single public entry point. Routes traffic across subnets to healthy EC2 instances.
+- Auto Scaling Group (ASG): Automatically maintains 1-3 instances. Replaces crashed instances automatically.
+- Launch Template: The blueprint for new EC2 instances. Defines the AMI, Security Groups, IAM profile, and the `user_data` script to start Docker.
+- AWS Secrets Manager: Dynamically stores the RDS password. The Flask app uses `boto3` to fetch this password at runtime instead of hardcoding it in the environment.
+
+### The "Chain of Trust"
+1. User requests hit ALB on Port 80.
+2. ALB forwards to EC2 ASG instances on Port 5000 (after a successful health check).
+3. EC2 instance assumes IAM Role to pull the DB password from Secrets Manager.
+4. EC2 connects securely to RDS Postgres on Port 5432.
+5. Docker sends all `stdout/stderr` directly to CloudWatch via the `awslogs` driver.
+
+---
+
+## Scaling & FinOps Integration (The "Big Deal")
+
+### Auto-Scaling Logic (Self-Healing)
+- Desired Capacity (1): We maintain 1 server at minimum to keep baseline costs low.
+- Target Group Health Checks: The ALB pings `/tasks` every 30s. If the app crashes (e.g., RDS connection fails), the ALB marks it "Unhealthy" and temporarily stops routing traffic (returning a 502 Bad Gateway).
+- Self-Healing: If an instance remains unhealthy or is manually deleted, the ASG automatically terminates it and launches a fresh replacement. The `user_data` script installs Docker and pulls the `:latest` image without human intervention.
+
+### FinOps & Cost Strategy
+- Scale-In Policy (Cost Savings): Linked to the `cpu-low` CloudWatch alarm. If CPU remains < 30% for 2 minutes, the ASG attempts to scale in, ensuring we never pay for idle compute.
+- Scale-Out Policy (Performance): Linked to the `cpu-high` alarm to handle sudden traffic spikes automatically.
+- Centralized Logging: By configuring Docker's `awslogs` driver, we eliminate the need for expensive third-party log-aggregator servers. Logs are kept in CloudWatch and auto-deleted after 7 days to cap storage costs.
+- Managed Database Efficiency: RDS `db.t3.micro` with `multi_az = false` provides professional Postgres capabilities at the lowest possible AWS price point for dev environments.
 
 ---
 
 ## Problems & Fixes
 
+### ALB 502 Bad Gateway (Phase 6/7)
+- Symptom: ALB returned 502; Target Group listed instance as "Unhealthy."
+- Cause: The Flask container was crashing immediately on startup because it couldn't connect to RDS.
+- Fix: Modified the RDS Security Group to allow inbound traffic on port 5432 specifically from the EC2 Security Group ID, not from the ALB.
+
+### Docker unknown log opt 'awslogs-stream-prefix' (Phase 7)
+- Symptom: `cloud-init-output.log` showed Docker failing to start the container. `docker ps -a` showed nothing.
+- Cause: The Docker version on Amazon Linux 2023 rejected the `awslogs-stream-prefix` flag.
+- Fix: Updated `autoscaling.tf` Launch Template to use `--log-opt tag="{{.Name}}/{{.ID}}"` instead.
+
+### Missing Logs / 0 Log Streams (Phase 7)
+- Symptom: Target was Healthy, but no logs appeared in CloudWatch `/cloudcost/app`.
+- Cause: Docker logs were trapped on the EC2 local disk.
+- Fix: Ensured the EC2 IAM role had `CloudWatchAgentServerPolicy` and explicitly configured `--log-driver=awslogs` in the `docker run` command inside the Launch Template.
+
+### RDS "No data available" on Dashboard (Phase 5/7)
+- Symptom: EC2 metrics showed up instantly, but RDS widgets were blank.
+- Cause: RDS metrics take longer (10-15 mins) to populate, and the app was idle.
+- Fix: Sent a burst of `POST` traffic via a `curl` loop to generate CPU activity and adjusted the dashboard time window to "3h".
+
 ### PowerShell mkdir doesn't accept multiple folders
-```
-# fails in PowerShell
+fails in PowerShell
 mkdir frontend backend terraform jenkins monitoring
 
-# fix - use semicolons
-mkdir frontend; mkdir backend; mkdir terraform; mkdir jenkins; mkdir monitoring
+fix - use semicolons
+mkdir frontend; mkdir backend; terraform; jenkins; monitoring
 
-# or just use Git Bash
-```
+or just use Git Bash
 
 ### pip not found
 Was in wrong folder. Always cd to backend and activate venv first.
@@ -402,12 +424,12 @@ Fix: re-ran describe-images command with --region us-east-1 flag.
 ### Key pair not found on apply
 Key pair was created in wrong region (not us-east-1).
 Fix: deleted local .pem file and recreated with --region us-east-1.
-```
 rm ~/.ssh/cloudcost-keypair.pem   # type y when prompted
-aws ec2 create-key-pair --key-name cloudcost-keypair --region us-east-1 \
-  --query 'KeyMaterial' --output text > ~/.ssh/cloudcost-keypair.pem
+aws ec2 create-key-pair --key-name cloudcost-keypair --region us-east-1
+
+--query 'KeyMaterial' --output text > ~/.ssh/cloudcost-keypair.pem
 chmod 400 ~/.ssh/cloudcost-keypair.pem
-```
+
 
 ### Permission denied on .pem file
 chmod 400 makes the file read-only to protect it.
@@ -444,38 +466,32 @@ Fix: added region = var.aws_region to every widget's properties block.
 ---
 
 ## Security Notes
-- RDS in private subnets, no public IP, unreachable from internet
-- RDS security group only allows traffic from EC2 security group
-- db_password marked sensitive = true in Terraform
-- Passwords passed via TF_VAR_ env variables, never in code
-- .tfstate excluded from Git (contains sensitive resource details)
-- SSH port 22 open to 0.0.0.0/0 - acceptable for dev, restrict in prod
-- Jenkins credentials encrypted at rest, masked in build logs
-- Docker Hub uses personal access token, not account password
-- SSH key passed via withCredentials, never written to disk in plaintext
-- IAM role uses least privilege - only CloudWatchAgentServerPolicy attached
-- EC2 accesses CloudWatch via IAM role, no hardcoded AWS keys anywhere
+- Zero Hardcoded Secrets: App uses `boto3` to fetch the DB password from Secrets Manager using its IAM Role.
+- Network Isolation: RDS is in private subnets and unreachable from the internet.
+- ALB as Shield: EC2 instances no longer need public IPs or direct internet exposure; they sit safely behind the Load Balancer.
+- Least Privilege IAM: EC2 role only has permissions to read its specific Secret and write logs to its specific CloudWatch group.
+- Passwords passed via TF_VAR_ env variables, never in code.
+- .tfstate excluded from Git (contains sensitive resource details).
+- Jenkins credentials encrypted at rest, masked in build logs.
+- SSH key passed via withCredentials, never written to disk in plaintext.
 
 ## FinOps Notes
-- us-east-1 is cheapest AWS region
-- t3.micro EC2 ~$0.01/hour, free tier eligible under 12 months
-- db.t3.micro RDS ~$0.018/hour (~$13/month), not free tier
-- multi_az = false saves ~50% on RDS cost in dev
-- skip_final_snapshot = true avoids snapshot storage cost
-- Always run terraform destroy when done testing
-- Tags on every resource enable cost filtering in AWS Cost Explorer
-- docker image prune after every build prevents disk bloat
-- BUILD_NUMBER versioning enables rollbacks without storing extra images
-- Jenkins runs locally, no EC2 cost for CI/CD server
-- CloudWatch log retention set to 7 days, logs auto-deleted to avoid
-  storage cost buildup
-- CloudWatch basic monitoring is free, detailed monitoring costs extra
-  basic monitoring collects metrics every 5 minutes
+- Auto Scaling Scale-in: Saves money by terminating instances when CPU drops below 30%.
+- us-east-1 is cheapest AWS region.
+- t3.micro EC2 ~$0.01/hour, free tier eligible under 12 months.
+- db.t3.micro RDS ~$0.018/hour (~$13/month), not free tier.
+- multi_az = false saves ~50% on RDS cost in dev.
+- skip_final_snapshot = true avoids snapshot storage cost.
+- Always run terraform destroy when done testing.
+- Tags on every resource enable cost filtering in AWS Cost Explorer.
+- docker image prune after every build prevents disk bloat.
+- Jenkins runs locally, no EC2 cost for CI/CD server.
+- CloudWatch log retention set to 7 days, logs auto-deleted to avoid storage cost buildup.
+- CloudWatch basic monitoring is free, detailed monitoring costs extra (basic monitoring collects metrics every 5 minutes).
 
 ## Things to improve later
 - Restrict SSH to your IP only instead of 0.0.0.0/0
 - Store tfstate in S3 for team sharing and safety
-- Connect Flask to RDS Postgres instead of SQLite
 - Add PATCH /tasks/<id> to mark tasks as done
 - Add input validation on backend
 - Move Jenkins to EC2 and add GitHub webhook for automatic pipeline triggers

@@ -15,9 +15,10 @@ services:
       - DOCKER_HOST=unix:///var/run/docker.sock
     entrypoint: >
       bash -c "
-        apt-get update -qq &&
-        apt-get install -y docker.io &&
-        /usr/bin/tini -- /usr/local/bin/jenkins.sh
+      apt-get update -qq &&
+      apt-get install -y docker.io &&
+      git config --global --add safe.directory '*' &&
+      /usr/bin/tini -- /usr/local/bin/jenkins.sh
       "
     restart: unless-stopped
 

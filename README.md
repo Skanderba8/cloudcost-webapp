@@ -2,8 +2,14 @@
 
 Production-grade task manager built to demonstrate cost-aware cloud architecture: auto-scaling, self-healing, secrets management, CI/CD, and full observability — all on a sub-$1/day budget.
 
+[![Status](https://img.shields.io/badge/Status-Complete-brightgreen)]()
+[![IaC](https://img.shields.io/badge/IaC-Terraform-7B42BC)]()
+[![Cloud](https://img.shields.io/badge/Cloud-AWS-FF9900)]()
+[![CI/CD](https://img.shields.io/badge/CI/CD-Jenkins-D24939)]()
+[![Backend](https://img.shields.io/badge/Backend-Python%20Flask-3776AB)]()
+[![Monitoring](https://img.shields.io/badge/Monitoring-CloudWatch-FF4F8B)]()
+[![Cost](https://img.shields.io/badge/Cost-~%241%2Fday-brightgreen)]()
 ---
-
 ## Stack
 
 | Layer | Technology |

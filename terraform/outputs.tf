@@ -1,16 +1,16 @@
-output "ec2_public_ip" {
-    description = "Public IP Address of EC2 Instance"
-    value = aws_instance.app.public_ip
+output "alb_dns_name" {
+  description = "DNS name of the Application Load Balancer"
+  value       = aws_lb.app.dns_name
 }
 
 output "rds_endpoint" {
-    description = "Endpoint Address of RDS Instance"
-    value = aws_db_instance.main.endpoint
+  description = "Endpoint Address of RDS Instance"
+  value       = aws_db_instance.main.endpoint
 }
 
 output "vpc_id" {
-    description = "VPC ID"
-    value = aws_vpc.main.id
+  description = "VPC ID"
+  value       = aws_vpc.main.id
 }
 
 output "cloudwatch_dashboard_url" {
@@ -24,8 +24,13 @@ output "cloudwatch_log_group" {
 }
 
 output "ec2_cloudwatch_alarm" {
-  description = "Name of EC2 CPU alarm"
+  description = "Name of EC2 CPU high alarm"
   value       = aws_cloudwatch_metric_alarm.cpu_high.alarm_name
+}
+
+output "ec2_cloudwatch_alarm_low" {
+  description = "Name of EC2 CPU low alarm"
+  value       = aws_cloudwatch_metric_alarm.cpu_low.alarm_name
 }
 
 output "rds_cloudwatch_alarm_cpu" {

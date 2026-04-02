@@ -1,4 +1,3 @@
-# Log group to store Flask app logs from the container
 resource "aws_cloudwatch_log_group" "app_logs" {
   name              = "/cloudcost/app"
   retention_in_days = 7
@@ -10,7 +9,6 @@ resource "aws_cloudwatch_log_group" "app_logs" {
   }
 }
 
-# Alarm - fires when EC2 CPU stays above 70% for 2 consecutive minutes
 resource "aws_cloudwatch_metric_alarm" "cpu_high" {
   alarm_name          = "${var.project_name}-cpu-high"
   comparison_operator = "GreaterThanThreshold"
@@ -20,20 +18,43 @@ resource "aws_cloudwatch_metric_alarm" "cpu_high" {
   period              = 60
   statistic           = "Average"
   threshold           = 70
-  alarm_description   = "EC2 CPU utilization above 70%"
+  alarm_description   = "Scale out when CPU above 70%"
+  alarm_actions       = [aws_autoscaling_policy.scale_out.arn]
 
   dimensions = {
-    InstanceId = aws_instance.app.id
+    AutoScalingGroupName = aws_autoscaling_group.app.name
   }
 
   tags = {
-    Name        = "${var.project_name}-cpu-alarm"
+    Name        = "${var.project_name}-cpu-high"
     Environment = var.environment
     Project     = var.project_name
   }
 }
 
-# Alarm - fires when RDS CPU stays above 70% for 2 consecutive minutes
+resource "aws_cloudwatch_metric_alarm" "cpu_low" {
+  alarm_name          = "${var.project_name}-cpu-low"
+  comparison_operator = "LessThanThreshold"
+  evaluation_periods  = 2
+  metric_name         = "CPUUtilization"
+  namespace           = "AWS/EC2"
+  period              = 60
+  statistic           = "Average"
+  threshold           = 30
+  alarm_description   = "Scale in when CPU below 30%"
+  alarm_actions       = [aws_autoscaling_policy.scale_in.arn]
+
+  dimensions = {
+    AutoScalingGroupName = aws_autoscaling_group.app.name
+  }
+
+  tags = {
+    Name        = "${var.project_name}-cpu-low"
+    Environment = var.environment
+    Project     = var.project_name
+  }
+}
+
 resource "aws_cloudwatch_metric_alarm" "rds_cpu_high" {
   alarm_name          = "${var.project_name}-rds-cpu-high"
   comparison_operator = "GreaterThanThreshold"
@@ -56,7 +77,6 @@ resource "aws_cloudwatch_metric_alarm" "rds_cpu_high" {
   }
 }
 
-# Alarm - fires when RDS free storage drops below 1GB
 resource "aws_cloudwatch_metric_alarm" "rds_storage_low" {
   alarm_name          = "${var.project_name}-rds-storage-low"
   comparison_operator = "LessThanThreshold"
@@ -91,13 +111,13 @@ resource "aws_cloudwatch_dashboard" "main" {
         width  = 12
         height = 6
         properties = {
-          title  = "EC2 CPU Utilization"
+          title  = "ASG CPU Utilization"
           view   = "timeSeries"
           stat   = "Average"
           period = 60
           region = var.aws_region
           metrics = [
-            ["AWS/EC2", "CPUUtilization", "InstanceId", aws_instance.app.id]
+            ["AWS/EC2", "CPUUtilization", "AutoScalingGroupName", aws_autoscaling_group.app.name]
           ]
         }
       },
@@ -142,14 +162,13 @@ resource "aws_cloudwatch_dashboard" "main" {
         width  = 12
         height = 6
         properties = {
-          title  = "EC2 Network In/Out"
+          title  = "ASG Instance Count"
           view   = "timeSeries"
           stat   = "Average"
           period = 60
           region = var.aws_region
           metrics = [
-            ["AWS/EC2", "NetworkIn", "InstanceId", aws_instance.app.id],
-            ["AWS/EC2", "NetworkOut", "InstanceId", aws_instance.app.id]
+            ["AWS/AutoScaling", "GroupInServiceInstances", "AutoScalingGroupName", aws_autoscaling_group.app.name]
           ]
         }
       }

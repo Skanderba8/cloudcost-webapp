@@ -73,7 +73,7 @@ def create_task():
 
 @app.route('/tasks/<int:task_id>', methods=['DELETE'])
 def delete_task(task_id):
-    task = Task.query.get(task_id)
+    task = task = db.session.get(Task, task_id)
     if not task:
         return jsonify({'message': 'Task not found'}), 404
     db.session.delete(task)

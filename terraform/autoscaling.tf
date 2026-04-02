@@ -26,6 +26,10 @@ resource "aws_launch_template" "app" {
     docker run -d \
       --name cloudcost-backend \
       --restart unless-stopped \
+      --log-driver=awslogs \
+      --log-opt awslogs-group=/cloudcost/app \
+      --log-opt awslogs-region=${var.aws_region} \
+      --log-opt tag="{{.Name}}/{{.ID}}" \
       -p 5000:5000 \
       -e DB_SECRET_NAME="${aws_secretsmanager_secret.db_password.name}" \
       -e DB_HOST="${aws_db_instance.main.address}" \

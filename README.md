@@ -1,6 +1,6 @@
 # CloudCost Optimized Multi-Tier Web App
 
-Multi-tier web app on AWS with Terraform, Jenkins CI/CD, auto-scaling,
+Multi-tier web app on AWS with Terraform, Jenkins CI/CD, auto-scaling, self-healing,
 monitoring, and cost optimization.
 
 ## Stack
@@ -335,27 +335,57 @@ main.tf changes:
 
 ---
 
-## Phase 6 & 7 - Auto-Scaling & Cloud Security
+## Phase 6 - High Availability & Auto-Scaling
 
 ### What was built
-Shifted from a "Single Server" to a highly available, self-healing "Cluster" architecture. Migrated from local SQLite to managed RDS Postgres, protected by AWS Secrets Manager.
+We abandoned the "Single Server" (Pet) model and moved to a distributed, self-healing "Cluster" (Cattle) architecture. The application is now fronted by an Application Load Balancer (ALB) that distributes traffic across an Auto Scaling Group (ASG) of EC2 instances spanning multiple Availability Zones. If a server crashes, AWS detects it and builds a new one automatically.
 
-### Key Components
-- Application Load Balancer (ALB): Single public entry point. Routes traffic across subnets to healthy EC2 instances.
-- Auto Scaling Group (ASG): Automatically maintains 1-3 instances. Replaces crashed instances automatically.
-- Launch Template: The blueprint for new EC2 instances. Defines the AMI, Security Groups, IAM profile, and the `user_data` script to start Docker.
-- AWS Secrets Manager: Dynamically stores the RDS password. The Flask app uses `boto3` to fetch this password at runtime instead of hardcoding it in the environment.
+### Architectural Changes (Terraform)
+- **Application Load Balancer (ALB):** Created an internet-facing ALB sitting in two public subnets (`us-east-1a`, `us-east-1b`). The ALB listens on port 80 and serves as the single entry point for all users.
+- **Target Group:** Configured to route traffic to port 5000 on the EC2 instances. Crucially, it performs health checks by hitting the `/tasks` endpoint every 30 seconds.
+- **Launch Template:** Replaced the static `aws_instance` resource. This acts as the blueprint for all new servers. It defines the AMI, Instance Type, IAM Profile, Security Groups, and contains the critical `user_data` bash script that installs Docker and runs the container on boot.
+- **Auto Scaling Group (ASG):** Linked to the Launch Template and Target Group. Configured with `min_size = 1`, `max_size = 3`, and `desired_capacity = 1`.
+- **Scaling Policies & Alarms:** - **Scale-Out:** CloudWatch alarm triggers if CPU > 70% for 2 minutes, adding 1 instance.
+  - **Scale-In:** CloudWatch alarm triggers if CPU < 30% for 2 minutes, removing 1 instance to save costs.
 
-### The "Chain of Trust"
-1. User requests hit ALB on Port 80.
-2. ALB forwards to EC2 ASG instances on Port 5000 (after a successful health check).
-3. EC2 instance assumes IAM Role to pull the DB password from Secrets Manager.
-4. EC2 connects securely to RDS Postgres on Port 5432.
-5. Docker sends all `stdout/stderr` directly to CloudWatch via the `awslogs` driver.
+### CI/CD Pipeline Evolution (Jenkins)
+Because servers are now ephemeral (they can be created or destroyed by AWS at any time), hardcoding an `EC2_IP` to deploy code is impossible. 
+- **Removed Deploy Stage:** We completely removed the Jenkins stage that SSH'd into the server.
+- **New Deployment Strategy:** Jenkins now only Builds and Pushes the `:latest` image to Docker Hub. 
+- **Instance Refresh:** To deploy new code, we trigger an "Instance Refresh" in the AWS ASG console. AWS systematically terminates old instances and spins up new ones, which automatically pull the fresh `:latest` image via the `user_data` script.
+
+### Key Concepts Mastered
+- **Self-Healing:** If an instance is manually terminated or fails the ALB health check, the ASG immediately recognizes the desired capacity (1) does not match the actual capacity (0) and spins up a replacement without human intervention.
+- **Grace Periods:** Understanding that ALBs and ASGs need 2-3 minutes to boot the OS, install Docker, pull the image, and pass consecutive health checks before traffic is routed.
 
 ---
 
-## Scaling & FinOps Integration (The "Big Deal")
+## Phase 7 - Cloud Security, RDS & Centralized Logging
+
+### What was built
+We migrated the database from a local, ephemeral SQLite file to a managed, highly available AWS RDS Postgres instance. To secure it, we eliminated all hardcoded passwords using AWS Secrets Manager. Finally, we integrated Docker directly with CloudWatch to ensure container logs survive even when EC2 instances are destroyed.
+
+### Database & Security Integration
+- **RDS Postgres Migration:** Provisioned a `db.t3.micro` Postgres instance inside the Private Subnets. It has no public IP, making it completely unreachable from the internet.
+- **AWS Secrets Manager:** Created a secret (`cloudcost-webapp-db-password`) to store the database password dynamically. 
+- **IAM Least Privilege:** Modified the EC2 IAM Role. The EC2 instances now have specific permissions to execute `secretsmanager:GetSecretValue`. 
+- **Boto3 Application Logic:** Updated the Flask `app.py` to use the AWS SDK (`boto3`). On startup, Flask securely requests the password from Secrets Manager and uses it to build the SQLAlchemy Postgres connection string.
+
+### Centralized Logging (The Docker `awslogs` Driver)
+When an ASG scales in, the EC2 instance is deleted forever. If logs are saved to the local disk, they are lost. 
+- **CloudWatch Log Group:** Created `/cloudcost/app` to store application logs.
+- **Docker Integration:** Modified the Launch Template's `docker run` command to bypass the local disk and stream standard output (Flask logs + SQL queries) directly to AWS using the `--log-driver=awslogs` flag.
+
+### The "Chain of Trust" Execution Flow
+1. User requests hit the **ALB** on Port 80.
+2. ALB forwards to an **ASG EC2 Instance** on Port 5000.
+3. EC2 instance assumes its **IAM Role** to pull the DB password from **Secrets Manager**.
+4. EC2 connects securely to **RDS Postgres** on Port 5432.
+5. Docker streams all `stdout/stderr` back up to **CloudWatch Logs**.
+
+---
+
+## Scaling & FinOps Integration
 
 ### Auto-Scaling Logic (Self-Healing)
 - Desired Capacity (1): We maintain 1 server at minimum to keep baseline costs low.
